@@ -1,0 +1,178 @@
+---
+title: "STAT4214 Final Project: Predicting House Prices"
+author: "Chandler Crescentini"
+date: "May 13, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r, warning=FALSE, message=FALSE}
+library(MASS)
+library(olsrr)
+
+house <- read.csv(file = "C:/Users/Chandler/Documents/STAT_4212/HouseData_Crescentini.csv", header = T)
+
+# remove property number and webpage columns
+house <- house[,-2]
+house <- house[,-1]
+
+# take 20% of data for holdout
+house_holdout <- house[65:80,]
+house <- house[1:64,]
+```
+
+# Introduction
+
+The ability to predict house prices can be advantageous for both buyers and sellers. With an accurate prediction model, buyers can get a sense of whether or not a particular house is a good deal, and sellers can use it as a guideline for setting an initial price when putting a house on the market. The goal of this project is to use publicly available data collected from Realtor.com to create a predictive model for house prices in Hanover County, Virginia.
+
+
+# Data Collection
+
+The first step in this, and any other data analysis project, is the collection of data. Here, we collected data on the first 80 single family homes currently listed for sale in Hanover County, Virginia from Realtor.com. We manually collected quantitative data in the form of current price of the home, number of bedrooms, number of bathrooms, amount of living space in square feet, the lot size in acres, the year the house was built, and the total number of rooms. Two categorical varibables, containing four levels each, were also collected: the building exterior type (wood, brick, vinyl, brick/vinyl), and the school district the house is situated in (Atlee, Hanover, Lee Davis, Patrick Henry).
+
+
+# Analysis
+
+To begin, we take the last 16 observations (20%) of the data, set it aside to serve as our holdout for prediction, and perform some exploratory data analysis on the remaining data. We do this by examining the plots of each individual predictor versus the response in an attempt to identify any relationships that may be present.
+
+```{r}
+par(mfrow=c(2,2))
+plot(house$Value, house$Beds, xlab = "Number of Bedrooms", ylab = "Price of House")
+plot(house$Value, house$Baths, xlab = "Number of Bathrooms", ylab = "Price of House")
+plot(house$Value, house$LivingSpace, xlab = "Amount of Living Space (sq. ft.)", ylab = "Price of House")
+plot(house$Value, house$LotSize, xlab = "Lot Size (acres)", ylab = "Price of House")
+```
+
+```{r}
+par(mfrow=c(2,2))
+plot(house$Value, house$YearBuilt, xlab = "Year Built", ylab = "Price of House")
+plot(house$Value, house$TotRooms, xlab = "Total Number of Rooms", ylab = "Price of House")
+plot(house$Value, house$BuildExtType, xlab = "Building Exterior Type", ylab = "Price of House")
+plot(house$Value, house$SchoolDist, xlab = "School District", ylab = "Price of House")
+```
+
+Examining the above plots, we see pretty clear linear relationships in the plots of number of bedrooms, bathrooms, total number of rooms, and amount of living space. Lot size and year built also appear to have positive relationships, but lot size has a large number of small observations which may dampen any effects in our regression analysis. The plots of our categorical variables are difficult to interpret so further examination will be required. It is also clear from the above plots that we may have a problematic data point with a price that is nearly 60% larger than the next highest value.
+
+```{r}
+fit0 <- lm(Value ~ 1, data = house)
+fit1 <- lm(Value ~ ., data = house)
+
+vif <- ols_coll_diag(fit1)
+vif$vif_t
+```
+
+After examining the individual predictors, we check for any multicollinearity issues by reporting the variance inflation factors for each predictor, then perform forward, backward, and forward/backward stepwise regression in order to build our model. The VIF values are shown above and we see that all reported values are less than ten, so we conclude that there are no serious multicollinearity issues in the full model. We do notice that there are two variables (Baths and LivingSpace) that have VIF values greater than four. This is not a serious issue, but we will keep this in mind and reexamine once we have arrived at a reduced model.
+
+```{r}
+ols_step_both_p(fit1, pent = .25, prem = .1) # LivingSpace, Beds, LotSize
+```
+
+Each of the three stepwise regression routines return the same three variables (LivingSpace, Beds, and LotSize) with the exact same values returned for each statistic. For succinctness, we only include the output for the forward/backward stepwise regression. We see that the overall F-test, as well as the partial t-tests for each regressor are significant on the $\alpha = 0.05$ level and we report an $R^2$ and RMSE values of 0.908 and 52717.489 respectively. The $R^2$ value tells us that 90.8% of the variation in the reponse can be explained by this model, and the RMSE tells us how far from the regression line each of the data points are. 
+
+In the context of this project, it does not make sense to interpret the intercept, but in the interest of completeness, the intercept of 130206.192 represents the average price of a home with zero square feet, zero bedrooms, and zero acres of land. The beta value for LivingSpace, 143.764 means that for a one square foot increase in living space and everything else held constant, we expect the price of a home to increase by \$143.76, on average. For the LotSize variable, for a one acre increase in property size with everything else held constant, we expect the price of a home to increase by \$7176.85, on average. Finally, for the Beds variable, for each additional bedroom with everything else held constant, we expect the price of a home to decrease by \$38067.86, on average. This seems to be a very strange result, especially based on the graph of number of bedrooms versus price of home in our exploratory data analysis above. Looking back at this plot, the high leverage point on the far right of the graph might also be highly influential, and unduly affecting the regression result. Next, we perform residual analysis to determine if this is the case.
+
+
+```{r}
+fit2 <- lm(Value ~ LotSize + Beds + LivingSpace, data = house)
+ols_plot_resid_stud_fit(fit2)
+```
+
+In order to identify outliers, we examine the deleted studentized residuals versus the predicted values. Looking at the plot, we see the majority of data points far left quarter, and all of the points, except for observation 61, in the left half. Although we have several outliers based on our rule of thumb $\lvert R_i \rvert > 2$, the only point of real concern is observation 61. As a note, if we had used a more conservative rule of thumb $\lvert R_i \rvert > 3$, none of the points would be flagged as outliers. 
+
+```{r}
+plot(hatvalues(fit2), ylab = "Hat Value", main = "High Leverage Identification")
+abline(h = 2*3/64, col = "red")
+```
+
+Next, we examine a plot of the hat values, which measure the remoteness of the predictor value of the $i^{th}$ observation relative to the others, in order to identify any high leverage points in the data. Looking at the plot, we have six data points that are flagged based on our rule of thumb $h_{ii}>\frac{2p}{n} = 0.09375$. Of these, two (49 and 61) are significantly greater than the rest. Next, we will examine whether or not these two points are also identified as highly influential points using Cook's Distance.
+
+```{r}
+plot(cooks.distance(fit2), ylab = "Cook's Distance", main = "HIP Identification")
+abline(h = 1.0, col = "red")
+```
+
+Cook's Distance is a measure that represents how all of the predicted values would change if that particular observation were left out of the regression. Based on our rule of thumb $D_i > 1$, we see two data points (49 and 61) are classified as highly influential points. Point 61 is the most egregious, and stands out substantially compared to the rest of the observations. Since we have classified this point as an outlier, a high leverage point, and a highly influential point, we will rerun the regression analysis excluding this point. Although point 49 has also been flagged by all three tests, we will wait and see if removing point 61 fixes its problems before deleting that one as well.
+
+
+```{r}
+house1 <- house[-61,]
+fit3 <- lm(Value ~ 1, data = house1)
+fit4 <- lm(Value ~ ., data = house1)
+
+ols_step_both_p(fit4, pent = .25, prem = .1) # LivingSpace, LotSize, YearBuilt, BuildExtType
+```
+
+We repeat same process as above for the dataset without observation 61. Once again, for succinctness, we only include the forward/backward stepwise procedure since it is the exact same as the backward procedure, and illustrates the fact that the forward procedure includes the TotRooms variable even though it does not significantly contribute to the model containing all other variables and should be removed. We notice that this model contains the YearBuilt and BuildExtType variables instead of the Beds variable in the previous model. Although we have a lower $R^2_{adj}$ value for this model (0.863 vs. 0.904), we also have lower AIC (1544.84 vs. 1579.20) and RMSE values (47742.22 vs. 52717.49), indicating this model is an improvement over the previous one.
+
+As stated previously, interpreting the intercept does not make sense in the context of this project, but we will do so anyways. Since this model contains one of our categorical variables (BuildExtType), the intercept ($\beta_0$) value of -2445070.913 represents the average price of a brick house with zero square feet of living space, zero acres of land, and built in year zero. The beta value for LivingSpace ($\beta_1$) means that for each additional square foot of living space, we expect the price of a house will increase by \$98.034, on average, provided all other variables are held constant. The beta value for LotSize ($\beta_2$) means that for each additional acre of property size, we expect the price of a house will increase by \$8493.16, on average, provided all other variables are held constant. The beta value for YearBuilt ($\beta_3$) means that for a one year increase in built date, we expect the price of a house to increase by \$1294.18, on average, provided all other variables are held constant. For the categorical variable BuildExtType, $\beta_4$ represents the mean price for a house with brick/vinyl is \$-31610.20 compared to brick, provided all other variables are held constant. $\beta_5$ represents the price for a house with a vinyl exterior is \$-55200.44 compared to brick, provided all other variables are held constant. Finally, $\beta_5$ represents the mean price for a house with wood siding is \$-48402.50 compared to a house with brick, provided all other variables are held constant. 
+
+
+```{r}
+fit5 <- lm(Value ~ LotSize + LivingSpace + YearBuilt + BuildExtType, data = house1)
+vif2 <- ols_coll_diag(fit5)
+vif2$vif_t
+```
+
+To ensure we do not have any multicollinearity issues we check the VIF values for each of the regressors in our reduced model, and conclude that there are no issues since all values are less than three.
+
+```{r}
+ols_plot_resid_stud_fit(fit5)
+```
+
+The plot of the deleted studentized residuals versus the predicted values allows us to check the constant variance and linearity assumptions, as well as identify outliers. Looking at the plot, it appears that we have constant variance with all of the data points centered around zero. Although we have some pertubations, we would be reading too much into it to assume that the linearity assumption is violated. There are several outliers based on our rule of thumb stated previously, however, with a slightly more conservative rule of thumb, we eliminate almost all of the outliers.
+
+```{r}
+plot(hatvalues(fit5), ylab = "Hat Values", main = "High Leverage Identification")
+abline(h = 2*6/63, col = "red")
+```
+
+Next, we look at a plot of the hat values in order to identify the high leverage points. Since this model contains more regressors, our rule of thumb cutoff increases in value. Our new model has increased the variance of the hat values, but reduced the amount that fall above the rule of thumb cutoff line. We notice that point 49 still has the potential to be a high influence point, so we examine the Cook's Distance in order to determine if it is or not.
+
+```{r}
+plot(cooks.distance(fit5), ylim = c(0.0, 1.1), ylab = "Cook's Distance", main = "HIP Identification")
+abline(h = 1.0, col = "red")
+```
+
+The Cook's Distance plot indicates that we have no highly influential points. Removing data point 61 and fitting a new model has caused our other previously problematic data point to be fixed. Plotting the excluded regressors against the deleted studentized residuals below can help to show whether or not we should include any of them in the model. Since there are no clear trends in any of the plots, we can conclude that none of the excluded regressors should be included in the model. This confirms the stepwise selection process computed above.
+
+```{r}
+resid <- rstudent(fit5)
+par(mfrow=c(2,2))
+plot(house1$Beds, resid, xlab = "Number of Bedrooms", ylab = "Studentized Residuals")
+plot(house1$Baths, resid, xlab = "Number of Bathrooms", ylab = "Studentized Residuals")
+plot(house1$TotRooms, resid, xlab = "Total Number of Rooms", ylab = "Studentized Residuals")
+plot(house1$SchoolDist, resid, xlab = "School District", ylab = "Studentized Residuals")
+```
+
+Finally, we use our model to predict the 16 properties in the holdout. Below we plot the actual price of the home with a black dot, the predicted price of a home based on our model in red, and provide the prediction interval with a dashed green line. Overall, the model seems to do a pretty decent job of predicting the home price. We predict several of the points almost exactly, are very close on several more, and only one observation falls outside of the prediction interval (point 15).
+
+```{r}
+pred <- predict(fit5, house_holdout, interval = "prediction")
+
+predDiff <- house_holdout$Value - pred[,1]
+
+plot(house_holdout$Value, ylim = c(1e+05, 8e+05), pch = 16, ylab = "House Price (dollars)", main = "Actual and Predicted Value of Homes")
+points(pred[,1], pch = 20, col = "red")
+lines(pred[,1], col = "red")
+lines(pred[,2], col = "green", lty = 3)
+lines(pred[,3], col = "green", lty = 3)
+legend("topleft", c("Actual", "Predicted", "Pred. Int."), col = c("black", "red", "green"), bty = "n", pch = c(16, 20), cex = 0.8)
+```
+
+
+# Conclusion
+
+In conclusion, of the variables collected: number of bedrooms, number of bathrooms, amount of living space in square feet, lot size in acres, year the house was built, total number of rooms, building exterior type, and school district, the most important predictors of price of a single family home in Hanover County, Virginia are amount of living space, lot size, year built, and building exterior type. The RMSE value for the model was found to be 47742.222 with an $R^2_{adj}$ value of 0.863 and an $R^2_{pred}$ value of 0.832. We also saw how a single highly influential point can affect the model to such an extent as to change which variables we include in the model. For our prediction of the 16 holdout datapoints, the RMSE value was found to be 47085.71, which is in line the the RMSE for the rest of the dataset, and only one actual value fell outside of the prediction interval.
+
+In terms of model improvement, there are so many tangible and intangible factors that go into home prices, that it may be impossible to predict them completely accurately based off of publicly available data on the internet. For example, it is impossible to tell from a dataset if the previous owners didn't take care of the house very well or if the house has been on the market for a long time and the price has dropped significantly in that time. Some issues in my model are that the majority of the houses collected for this study were in neightborhoods and thus had very small lot sizes with similar prices compared to others in a more rural area. This caused the overestimation of newer houses with a lot of land. If this project were to be completed again, we might be interested in adding a categorical variable of whether or not a house is in a neighborhood, or a quatitative variable such as commute time to nearest city. 
+
+
+
+
+
+
+
+
